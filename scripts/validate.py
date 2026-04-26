@@ -27,6 +27,16 @@ def calculate_metrics(genuine_distances, impostor_distances, threshold):
     frr = false_rejects / len(genuine_distances) if genuine_distances else 0
     return far, frr
 
+def calculate_far_at_frr(genuine_distances, impostor_distances, target_frr):
+    """Finds the FAR at a specific FRR target."""
+    if not genuine_distances or not impostor_distances:
+        return -1, -1
+    
+    # Find the threshold that yields the target FRR
+    threshold = np.quantile(genuine_distances, 1 - target_frr)
+    
+    far, frr = calculate_metrics(genuine_distances, impostor_distances, threshold)
+    return far, threshold
 
 def get_embedding(image_path, model, preprocessor, transform, device):
     """Helper function to get a single image's embedding."""
@@ -59,7 +69,9 @@ def main():
 
     logging.info("Loading model, enrollment database, and preprocessors...")
     embedding_net = EmbeddingNet(embedding_dim=128).to(device)
-    embedding_net.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    # Load the checkpoint dictionary and extract the model's state dict.
+    checkpoint = torch.load(MODEL_PATH, map_location=device)
+    embedding_net.load_state_dict(checkpoint['model_state_dict'])
     embedding_net.eval()
 
     with open(ENROLLMENT_DB_PATH, 'rb') as f:
@@ -134,6 +146,16 @@ def main():
     logging.info("At this optimal threshold:")
     logging.info(f"  False Acceptance Rate (FAR): {far_at_eer * 100:.2f}%")
     logging.info(f"  False Rejection Rate (FRR): {frr_at_eer * 100:.2f}%")
+
+    # 5. Report FAR at standard FRR benchmarks
+    logging.info("\n--- System Performance at Standard FRR Benchmarks ---")
+    benchmarks = {"FRR @ 10%": 0.10, "FRR @ 1%": 0.01, "FRR @ 0.1%": 0.001}
+    for name, frr_target in benchmarks.items():
+        far, threshold = calculate_far_at_frr(genuine_distances, impostor_distances, frr_target)
+        if far != -1:
+            logging.info(f"  {name}:")
+            logging.info(f"    - FAR: {far * 100:.2f}%")
+            logging.info(f"    - Threshold: {threshold:.4f}")
 
 
 if __name__ == '__main__':

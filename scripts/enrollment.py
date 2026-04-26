@@ -33,7 +33,9 @@ def main():
     # Load model
     logging.info("Loading trained embedding model...")
     embedding_net = EmbeddingNet(embedding_dim=128).to(device)
-    embedding_net.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    # Load the checkpoint dictionary and extract the model's state dict.
+    checkpoint = torch.load(MODEL_PATH, map_location=device)
+    embedding_net.load_state_dict(checkpoint['model_state_dict'])
     embedding_net.eval()
     logging.info("Model loaded successfully.")
 

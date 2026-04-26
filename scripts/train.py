@@ -3,7 +3,7 @@ import csv
 import torch
 import logging
 from torch.utils.data import DataLoader
-from torch.optim import AdamW
+from torch.optim import AdamW, lr_scheduler
 from tqdm import tqdm
 import cv2
 import torch.nn.functional as F
@@ -23,6 +23,7 @@ NUM_EPOCHS = 25
 BATCH_SIZE = 32
 LEARNING_RATE = 0.0001
 CONTRASTIVE_MARGIN = 1.0
+VALIDATION_THRESHOLD = 0.5  # Distance threshold for accuracy calculation.
 NUM_GENUINE_USERS = 100  # The number of users to include for training and validation.
 
 
@@ -63,19 +64,35 @@ def main():
     logging.info(f"Training data loader size: {len(train_loader)} batches")
     logging.info(f"Validation data loader size: {len(val_loader)} batches")
 
-    # 3. Model, Loss, and Optimizer Setup
+    # 3. Model, Optimizer, and Checkpoint Loading
     logging.info("Initializing model...")
     embedding_net = EmbeddingNet(embedding_dim=128).to(device)
     criterion = ContrastiveLoss(margin=CONTRASTIVE_MARGIN)
-    # AdamW is an improved version of Adam that handles weight decay more effectively.
     optimizer = AdamW(embedding_net.parameters(), lr=LEARNING_RATE)
+    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3, verbose=True)
 
-    # 4. Training and Validation Loop
+    start_epoch = 0
     best_val_loss = float('inf')
     training_history = []
 
-    for epoch in range(NUM_EPOCHS):
+    # Check if a checkpoint exists to resume training.
+    if os.path.exists(MODEL_SAVE_PATH):
+        logging.info(f"Resuming training from checkpoint: {MODEL_SAVE_PATH}")
+        checkpoint = torch.load(MODEL_SAVE_PATH)
+        embedding_net.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch']
+        best_val_loss = checkpoint['best_val_loss']
+        logging.info(f"Resumed from Epoch {start_epoch}. Best validation loss so far: {best_val_loss:.4f}")
+    else:
+        logging.info("Starting a new training session.")
+
+
+    # 4. Training and Validation Loop
+    logging.info(f"Training for {NUM_EPOCHS - start_epoch} more epochs.")
+    for epoch in range(start_epoch, NUM_EPOCHS):
         logging.info(f"--- Epoch {epoch+1}/{NUM_EPOCHS} ---")
+        logging.info(f"Current learning rate: {optimizer.param_groups[0]['lr']:.6f}")
 
         # Training Phase
         embedding_net.train()
@@ -104,6 +121,8 @@ def main():
         val_loss = 0.0
         all_pos_distances = []
         all_neg_distances = []
+        val_correct_predictions = 0
+        val_total_predictions = 0
 
         with torch.no_grad():
             progress_bar_val = tqdm(val_loader, desc="Validating")
@@ -122,11 +141,18 @@ def main():
                 all_pos_distances.extend(distances[label == 1].cpu().numpy())
                 all_neg_distances.extend(distances[label == 0].cpu().numpy())
 
+                # Calculate accuracy for this batch
+                val_correct_predictions += torch.sum(distances[label == 1] < VALIDATION_THRESHOLD).item()
+                val_correct_predictions += torch.sum(distances[label == 0] >= VALIDATION_THRESHOLD).item()
+                val_total_predictions += len(distances)
+
         avg_val_loss = val_loss / len(val_loader)
         avg_pos_dist = sum(all_pos_distances) / len(all_pos_distances) if all_pos_distances else 0
         avg_neg_dist = sum(all_neg_distances) / len(all_neg_distances) if all_neg_distances else 0
+        val_accuracy = (val_correct_predictions / val_total_predictions) * 100 if val_total_predictions > 0 else 0
 
         logging.info(f"Epoch {epoch+1} - Average Validation Loss: {avg_val_loss:.4f}")
+        logging.info(f"Epoch {epoch+1} - Validation Accuracy: {val_accuracy:.2f}%")
         logging.info(f"Epoch {epoch+1} - Avg. Positive Pair Distance: {avg_pos_dist:.4f}")
         logging.info(f"Epoch {epoch+1} - Avg. Negative Pair Distance: {avg_neg_dist:.4f}")
 
@@ -135,6 +161,7 @@ def main():
             'epoch': epoch + 1,
             'train_loss': avg_train_loss,
             'val_loss': avg_val_loss,
+            'val_accuracy': val_accuracy,
             'avg_pos_dist': avg_pos_dist,
             'avg_neg_dist': avg_neg_dist
         })
@@ -142,8 +169,17 @@ def main():
         # Save the model if validation loss has improved
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(embedding_net.state_dict(), MODEL_SAVE_PATH)
-            logging.info(f"Model improved. Saved to {MODEL_SAVE_PATH}")
+            # Save a checkpoint dictionary for robust resuming.
+            torch.save({
+                'epoch': epoch + 1,
+                'model_state_dict': embedding_net.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_val_loss': best_val_loss,
+            }, MODEL_SAVE_PATH)
+            logging.info(f"Validation loss improved. Checkpoint saved to {MODEL_SAVE_PATH}")
+
+        # Step the scheduler based on the validation loss
+        scheduler.step(avg_val_loss)
 
     logging.info("Training complete.")
     logging.info(f"Best validation loss: {best_val_loss:.4f}")

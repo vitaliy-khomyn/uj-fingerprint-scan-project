@@ -24,7 +24,7 @@ BATCH_SIZE = 32
 LEARNING_RATE = 0.0001
 CONTRASTIVE_MARGIN = 1.0
 VALIDATION_THRESHOLD = 0.5  # Distance threshold for accuracy calculation.
-NUM_GENUINE_USERS = 100  # The number of users to include for training and validation.
+NUM_TRAINING_USERS = 400  # The number of users to include for training and validation.
 
 
 def main():
@@ -45,7 +45,7 @@ def main():
     # 2. Data Loading and Preparation
     logging.info("Loading and splitting data...")
     # The 'test' split from our loader serves as the validation set during training.
-    train_files, val_files = load_and_split_data(DATASET_PATH, max_user_id=NUM_GENUINE_USERS)
+    train_files, val_files = load_and_split_data(DATASET_PATH, max_user_id=NUM_TRAINING_USERS)
 
     if not train_files or not val_files:
         logging.error("No training or validation data was loaded. Please check the dataset path in your .env file.")
@@ -54,8 +54,12 @@ def main():
     # Use a non-verbose preprocessor for cleaner logs during batch processing.
     quiet_preprocessor = FingerprintPreprocessor(verbose=False)
 
-    train_dataset = SiameseFingerprintDataset(train_files, preprocessor=quiet_preprocessor)
-    val_dataset = SiameseFingerprintDataset(val_files, preprocessor=quiet_preprocessor)
+    # Use augmented transforms for training and standard transforms for validation.
+    train_transform = SiameseFingerprintDataset.get_training_transform()
+    val_transform = SiameseFingerprintDataset.get_validation_transform()
+
+    train_dataset = SiameseFingerprintDataset(train_files, transform=train_transform, preprocessor=quiet_preprocessor)
+    val_dataset = SiameseFingerprintDataset(val_files, transform=val_transform, preprocessor=quiet_preprocessor)
 
     # Use pin_memory=True for faster data transfer to the GPU.
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)

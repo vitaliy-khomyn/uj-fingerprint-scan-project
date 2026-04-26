@@ -23,9 +23,11 @@ def parse_filename(filename):
     Example: 1__M_Left_index_finger.BMP -> (1, 'M', 'Left_index_finger')
     Example: 100__F_Right_ring_finger_CR.BMP -> (100, 'F', 'Right_ring_finger')
     """
-    # This regex handles finger names with two or three parts (e.g., "Left_thumb")
-    # and correctly separates the base finger name from alteration suffixes (e.g., "_CR").
-    match = re.match(r"(\d+)__(\w)_(\w+_\w+(?:_finger)?)(?:_.*)?\.BMP", filename, re.IGNORECASE)
+    # This regex is specifically designed to be robust against the SOCOFing naming scheme.
+    # It explicitly matches the known finger names and separates them from alteration suffixes.
+    finger_pattern = r"((?:Left|Right)_(?:thumb|index|middle|ring|little)(?:_finger)?)"
+    match = re.match(rf"(\d+)__(\w)_{finger_pattern}(?:_.*)?\.BMP", filename, re.IGNORECASE)
+
     if match:
         person_id = int(match.group(1))
         gender = match.group(2)
@@ -62,7 +64,7 @@ def _load_fingerprint_map(dataset_path, min_user_id, max_user_id):
     return fingerprint_map
 
 
-def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_size=0.2, random_state=42):
+def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_samples=5, random_state=42):
     """
     Loads fingerprint paths from the SOCOFing dataset and splits them into
     training and testing sets.
@@ -71,7 +73,7 @@ def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_size=
         dataset_path (str): Absolute path to the root 'SOCOFing' directory.
         max_user_id (int): The maximum user ID to include.
         min_user_id (int): The minimum user ID to include.
-        test_size (float): The proportion of the dataset to include in the test split.
+        test_samples (int): The number of samples per finger to allocate to the test set.
         random_state (int): Seed for reproducibility.
 
     Returns:
@@ -92,12 +94,13 @@ def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_size=
 
     # Split the files for each finger into training and testing sets.
     for (person_id, finger_name), files in fingerprint_map.items():
-        if len(files) > 1:
-            train_set, test_set = train_test_split(files, test_size=test_size, random_state=random_state)
+        # Ensure there are enough samples for both training and testing.
+        if len(files) > test_samples:
+            train_set, test_set = train_test_split(files, test_size=test_samples, random_state=random_state)
             train_files[(person_id, finger_name)] = train_set
             test_files[(person_id, finger_name)] = test_set
         else:
-            # If only one sample, put it in training
+            # If not enough samples, allocate all to training.
             train_files[(person_id, finger_name)] = files
 
     logging.info(f"Data split complete. Training samples: {sum(len(v) for v in train_files.values())}, Testing samples: {sum(len(v) for v in test_files.values())}")

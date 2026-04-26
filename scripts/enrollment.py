@@ -14,7 +14,8 @@ from data.dataset import SiameseFingerprintDataset
 DATASET_PATH = os.getenv("SOCOFING_DATASET_PATH")
 MODEL_PATH = "trained_models/embedding_net.pth"
 ENROLLMENT_DB_PATH = "enrollment_db.pkl"
-NUM_GENUINE_USERS = 100
+ENROLL_USERS_START = 401
+ENROLL_USERS_END = 500
 
 
 def main():
@@ -42,14 +43,14 @@ def main():
     # Load data
     logging.info("Loading data for enrollment...")
     # We will enroll users based on their training data samples for robustness.
-    train_files, _ = load_and_split_data(DATASET_PATH, max_user_id=NUM_GENUINE_USERS)
+    train_files, _ = load_and_split_data(DATASET_PATH, min_user_id=ENROLL_USERS_START, max_user_id=ENROLL_USERS_END)
 
     # Create enrollment database
     enrollment_db = {}
     # Use a non-verbose preprocessor for cleaner logs
     preprocessor = FingerprintPreprocessor(verbose=False)
-    # Get the same transforms used during training from the static method
-    transform = SiameseFingerprintDataset.get_default_transform()
+    # Get the standard validation transforms, as enrollment is an inference task.
+    transform = SiameseFingerprintDataset.get_validation_transform()
 
     logging.info("Enrolling genuine users...")
     with torch.no_grad():

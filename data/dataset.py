@@ -31,10 +31,20 @@ class SiameseFingerprintDataset(Dataset):
         self.eligible_positive_fids = [fid for fid in self.finger_ids if len(self.file_data[fid]) >= 2]
 
     @staticmethod
-    def get_default_transform():
-        """Returns the default torchvision transforms for ImageNet-based models."""
+    def get_validation_transform():
+        """Returns the standard torchvision transforms for validation and inference."""
         return transforms.Compose([
             transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+    @staticmethod
+    def get_training_transform():
+        """Returns torchvision transforms with data augmentation for training."""
+        return transforms.Compose([
+            transforms.ToTensor(),
+            transforms.RandomRotation(degrees=7),
+            transforms.RandomAffine(degrees=0, translate=(0.04, 0.04)),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 

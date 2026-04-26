@@ -17,6 +17,11 @@ MODEL_PATH = "trained_models/embedding_net.pth"
 ENROLLMENT_DB_PATH = "enrollment_db.pkl"
 RESULTS_SAVE_PATH = "validation_results.pkl"
 
+GENUINE_USERS_START = 401
+GENUINE_USERS_END = 500
+IMPOSTOR_USERS_START = 501
+IMPOSTOR_USERS_END = 600
+
 
 def calculate_metrics(genuine_distances, impostor_distances, threshold):
     """Calculates False Acceptance Rate (FAR) and False Rejection Rate (FRR) for a given threshold."""
@@ -78,14 +83,14 @@ def main():
         enrollment_db = pickle.load(f)
 
     preprocessor = FingerprintPreprocessor(verbose=False)
-    transform = SiameseFingerprintDataset.get_default_transform()
+    transform = SiameseFingerprintDataset.get_validation_transform()
     logging.info("Setup complete.")
 
     # 2. Collect Genuine and Impostor Distances
     logging.info("\n--- Collecting distances for analysis ---")
 
     # Collect Genuine Distances (1-to-1 verification)
-    _, genuine_test_files = load_and_split_data(DATASET_PATH, max_user_id=100, min_user_id=1)
+    _, genuine_test_files = load_and_split_data(DATASET_PATH, min_user_id=GENUINE_USERS_START, max_user_id=GENUINE_USERS_END)
     genuine_distances = []
     for true_finger_id, file_paths in tqdm(genuine_test_files.items(), desc="Genuine Verification"):
         if true_finger_id not in enrollment_db:
@@ -102,7 +107,7 @@ def main():
             genuine_distances.append(distance)
 
     # Collect Impostor Distances
-    impostor_train, impostor_test = load_and_split_data(DATASET_PATH, max_user_id=200, min_user_id=101)
+    impostor_train, impostor_test = load_and_split_data(DATASET_PATH, min_user_id=IMPOSTOR_USERS_START, max_user_id=IMPOSTOR_USERS_END)
     all_impostor_files = [file for files in list(impostor_train.values()) + list(impostor_test.values()) for file in files]
     impostor_distances = []
     for img_path in tqdm(all_impostor_files, desc="Impostor Verification"):

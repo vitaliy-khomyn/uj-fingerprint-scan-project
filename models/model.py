@@ -86,6 +86,30 @@ class ContrastiveLoss(nn.Module):
         return loss_contrastive
 
 
+class TripletLoss(nn.Module):
+    """
+    Implements the Triplet loss function.
+    This loss function pushes the distance between an anchor and a positive sample to be smaller
+    than the distance between the anchor and a negative sample by at least a specified margin.
+    """
+    def __init__(self, margin=0.5):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, anchor, positive, negative):
+        """
+        Args:
+            anchor (torch.Tensor): The embedding of the anchor image batch.
+            positive (torch.Tensor): The embedding of the positive image batch.
+            negative (torch.Tensor): The embedding of the negative image batch.
+        """
+        distance_positive = F.pairwise_distance(anchor, positive, keepdim=True)
+        distance_negative = F.pairwise_distance(anchor, negative, keepdim=True)
+
+        loss_triplet = torch.mean(torch.clamp(distance_positive - distance_negative + self.margin, min=0.0))
+        return loss_triplet
+
+
 def main():
     """
     Runs verification tests on the model components.
@@ -130,6 +154,23 @@ def main():
     labels_neg_far = torch.zeros(4, 1).to(device)
     loss_neg_far = loss_fn(emb1_neg_far, emb2_neg_far, labels_neg_far)
     logging.info(f"Loss for negative pair outside margin (should be 0): {loss_neg_far.item():.4f}")
+
+    # 3. Verify the Triplet Loss function
+    logging.info("\n--- Verifying TripletLoss ---")
+    triplet_loss_fn = TripletLoss(margin=0.5)
+    anchor = F.normalize(torch.randn(4, 128)).to(device)
+
+    # Test with an "easy" triplet where positive is closer than negative
+    positive_easy = F.normalize(anchor + torch.randn_like(anchor) * 0.01)
+    negative_easy = F.normalize(anchor + torch.randn_like(anchor) * 2.0) # Far away
+    loss_easy_triplet = triplet_loss_fn(anchor, positive_easy, negative_easy)
+    logging.info(f"Loss for easy triplet (should be 0): {loss_easy_triplet.item():.4f}")
+
+    # Test with a "hard" triplet where negative is closer than positive
+    positive_hard = F.normalize(anchor + torch.randn_like(anchor) * 0.5)
+    negative_hard = F.normalize(anchor + torch.randn_like(anchor) * 0.3) # Closer
+    loss_hard_triplet = triplet_loss_fn(anchor, positive_hard, negative_hard)
+    logging.info(f"Loss for hard triplet (should be > 0): {loss_hard_triplet.item():.4f}")
 
 
 if __name__ == '__main__':

@@ -9,8 +9,8 @@ import cv2
 import torch.nn.functional as F
 
 from data.data_loader import load_and_split_data
-from data.dataset import SiameseFingerprintDataset
-from models.model import EmbeddingNet, ContrastiveLoss
+from data.dataset import SiameseFingerprintDataset, FingerprintImageDataset, BalancedBatchSampler
+from models.model import EmbeddingNet, ContrastiveLoss, TripletLoss
 from preprocessing.preprocess import FingerprintPreprocessor
 
 # Configuration
@@ -21,8 +21,8 @@ HISTORY_SAVE_PATH = "training_history.csv"
 # Hyperparameters
 NUM_EPOCHS = 100
 BATCH_SIZE = 32
-LEARNING_RATE = 0.0001
-CONTRASTIVE_MARGIN = 1.0
+LEARNING_RATE = 0.00005  # A slightly lower learning rate is often better for TripletLoss
+TRIPLET_MARGIN = 0.4
 VALIDATION_THRESHOLD = 0.5  # Distance threshold for accuracy calculation.
 NUM_TRAINING_USERS = 400  # The number of users to include for training and validation.
 
@@ -58,11 +58,15 @@ def main():
     train_transform = SiameseFingerprintDataset.get_training_transform()
     val_transform = SiameseFingerprintDataset.get_validation_transform()
 
-    train_dataset = SiameseFingerprintDataset(train_files, transform=train_transform, preprocessor=quiet_preprocessor)
-    val_dataset = SiameseFingerprintDataset(val_files, transform=val_transform, preprocessor=quiet_preprocessor)
+    # For online hard mining, we need a dataset that returns individual images and labels,
+    # and a special sampler to create batches with multiple instances of the same class.
+    train_dataset = FingerprintImageDataset(train_files, transform=train_transform, preprocessor=quiet_preprocessor)
+    # Each batch will contain P fingers, with K images from each finger.
+    train_batch_sampler = BalancedBatchSampler(train_dataset, n_classes=8, n_samples=4) # Batch size = 8 * 4 = 32
+    train_loader = DataLoader(train_dataset, batch_sampler=train_batch_sampler, num_workers=4, pin_memory=True)
 
-    # Use pin_memory=True for faster data transfer to the GPU.
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+    # The validation dataset remains pair-based for consistent metric calculation.
+    val_dataset = SiameseFingerprintDataset(val_files, transform=val_transform, preprocessor=quiet_preprocessor)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
     logging.info(f"Training data loader size: {len(train_loader)} batches")
@@ -71,7 +75,9 @@ def main():
     # 3. Model, Optimizer, and Checkpoint Loading
     logging.info("Initializing model...")
     embedding_net = EmbeddingNet(embedding_dim=128).to(device)
-    criterion = ContrastiveLoss(margin=CONTRASTIVE_MARGIN)
+    # Use TripletLoss for training and ContrastiveLoss for validation metrics
+    train_criterion = TripletLoss(margin=TRIPLET_MARGIN)
+    val_criterion = ContrastiveLoss(margin=1.0) # Keep standard margin for validation
     optimizer = AdamW(embedding_net.parameters(), lr=LEARNING_RATE)
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3, verbose=True)
 
@@ -102,17 +108,49 @@ def main():
         embedding_net.train()
         train_loss = 0.0
         progress_bar = tqdm(train_loader, desc="Training")
-        for i, (img1, img2, label) in enumerate(progress_bar):
-            img1, img2, label = img1.to(device), img2.to(device), label.to(device)
+        for i, (images, labels) in enumerate(progress_bar):
+            images, labels = images.to(device), labels.to(device)
 
             optimizer.zero_grad()
 
-            output1 = embedding_net(img1)
-            output2 = embedding_net(img2)
+            embeddings = embedding_net(images)
 
-            loss = criterion(output1, output2, label.unsqueeze(1))
-            loss.backward()
-            optimizer.step()
+            # --- Online Semi-Hard Negative Mining ---
+            # Calculate pairwise distance matrix
+            pairwise_dist = torch.cdist(embeddings, embeddings, p=2)
+
+            all_triplets_loss = []
+            # Iterate through each sample in the batch as an anchor
+            for i in range(len(labels)):
+                anchor_label = labels[i]
+                dists = pairwise_dist[i]
+
+                # Find all positives and negatives for this anchor
+                pos_mask = (labels == anchor_label) & (torch.arange(len(labels)).to(device) != i)
+                neg_mask = labels != anchor_label
+
+                if not torch.any(pos_mask) or not torch.any(neg_mask):
+                    continue
+
+                # Select the hardest positive (furthest from anchor)
+                hardest_pos_dist = dists[pos_mask].max()
+
+                # Select semi-hard negatives: dist(A,P) < dist(A,N) < dist(A,P) + margin
+                semi_hard_neg_mask = neg_mask & (dists > hardest_pos_dist) & (dists < (hardest_pos_dist + TRIPLET_MARGIN))
+                if torch.any(semi_hard_neg_mask):
+                    # Form triplets with all semi-hard negatives and calculate their loss
+                    loss_for_anchor = F.relu(hardest_pos_dist - dists[semi_hard_neg_mask] + TRIPLET_MARGIN)
+                    all_triplets_loss.append(loss_for_anchor)
+
+            # Only perform backpropagation if valid triplets were found in the batch.
+            if all_triplets_loss:
+                loss = torch.cat(all_triplets_loss).mean()
+                loss.backward()
+                optimizer.step()
+            else:
+                # If no valid triplets are found, the loss is effectively zero for this batch.
+                # We create a tensor for logging purposes but do not backpropagate.
+                loss = torch.tensor(0.0)
 
             train_loss += loss.item()
             progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
@@ -137,7 +175,7 @@ def main():
                 output1 = embedding_net(img1)
                 output2 = embedding_net(img2)
 
-                loss = criterion(output1, output2, label_squeezed)
+                loss = val_criterion(output1, output2, label_squeezed)
                 val_loss += loss.item()
 
                 # Calculate distances for metric tracking

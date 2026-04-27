@@ -19,7 +19,7 @@ MODEL_SAVE_PATH = "trained_models/embedding_net.pth"
 HISTORY_SAVE_PATH = "training_history.csv"
 
 # Hyperparameters
-NUM_EPOCHS = 25
+NUM_EPOCHS = 40  # A reasonable upper limit; Early Stopping will likely finish sooner.
 BATCH_SIZE = 32
 LEARNING_RATE = 0.0001  # A more robust loss signal can handle a slightly larger LR
 TRIPLET_MARGIN = 0.4
@@ -63,7 +63,10 @@ def main():
     # and a special sampler to create batches with multiple instances of the same class.
     train_dataset = FingerprintImageDataset(train_files, transform=train_transform, preprocessor=quiet_preprocessor)
     # Each batch will contain P fingers, with K images from each finger.
-    train_batch_sampler = BalancedBatchSampler(train_dataset, n_classes=8, n_samples=4) # Batch size = 8 * 4 = 32
+    # By prioritizing more samples per class (K) over more classes (P), we increase the
+    # likelihood of finding meaningful hard triplets within each batch.
+    # P=4, K=8 is a stronger configuration than P=8, K=4 for the same batch size.
+    train_batch_sampler = BalancedBatchSampler(train_dataset, n_classes=4, n_samples=8)  # Batch size = 4 * 8 = 32
     train_loader = DataLoader(train_dataset, batch_sampler=train_batch_sampler, num_workers=4, pin_memory=True)
 
     # The validation dataset remains pair-based for consistent metric calculation.

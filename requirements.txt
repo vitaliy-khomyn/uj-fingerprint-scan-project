@@ -73,6 +73,7 @@ numpy==1.26.4
 opencv-python==4.9.0.80
 overrides==7.7.0
 packaging==25.0
+pandas==2.3.3
 pandocfilters==1.5.1
 parso==0.8.5
 pillow==12.1.1
@@ -91,6 +92,7 @@ PySocks==1.7.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
 python-json-logger==4.0.0
+pytz==2026.1.post1
 pywin32==311
 pywinpty==3.0.2
 PyYAML==6.0.3
@@ -124,6 +126,7 @@ tornado==6.5.2
 tqdm==4.67.3
 traitlets==5.14.3
 typing_extensions==4.15.0
+tzdata==2026.2
 urllib3==2.6.3
 wcwidth==0.2.14
 webencodings==0.5.1

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from data.data_loader import load_and_split_data
 from data.dataset import SiameseFingerprintDataset, FingerprintImageDataset, BalancedBatchSampler
-from models.model import EmbeddingNet, ContrastiveLoss, TripletLoss
+from models.model import EmbeddingNet, ContrastiveLoss
 from preprocessing.preprocess import FingerprintPreprocessor
 
 # Configuration
@@ -19,11 +19,12 @@ MODEL_SAVE_PATH = "trained_models/embedding_net.pth"
 HISTORY_SAVE_PATH = "training_history.csv"
 
 # Hyperparameters
-NUM_EPOCHS = 100
+NUM_EPOCHS = 25
 BATCH_SIZE = 32
-LEARNING_RATE = 0.00005  # A slightly lower learning rate is often better for TripletLoss
+LEARNING_RATE = 0.0001  # A more robust loss signal can handle a slightly larger LR
 TRIPLET_MARGIN = 0.4
 VALIDATION_THRESHOLD = 0.5  # Distance threshold for accuracy calculation.
+EARLY_STOPPING_PATIENCE = 10  # Stop if val_loss doesn't improve for 10 epochs.
 NUM_TRAINING_USERS = 400  # The number of users to include for training and validation.
 
 
@@ -76,13 +77,14 @@ def main():
     logging.info("Initializing model...")
     embedding_net = EmbeddingNet(embedding_dim=128).to(device)
     # Use TripletLoss for training and ContrastiveLoss for validation metrics
-    train_criterion = TripletLoss(margin=TRIPLET_MARGIN)
-    val_criterion = ContrastiveLoss(margin=1.0) # Keep standard margin for validation
+    # The TripletLoss is calculated manually in the training loop for "batch-all" mining.
+    val_criterion = ContrastiveLoss(margin=1.0)  # ContrastiveLoss is used for validation metrics.
     optimizer = AdamW(embedding_net.parameters(), lr=LEARNING_RATE)
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3, verbose=True)
 
     start_epoch = 0
     best_val_loss = float('inf')
+    epochs_without_improvement = 0  # For early stopping
     training_history = []
 
     # Check if a checkpoint exists to resume training.
@@ -93,7 +95,9 @@ def main():
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch = checkpoint['epoch']
         best_val_loss = checkpoint['best_val_loss']
-        logging.info(f"Resumed from Epoch {start_epoch}. Best validation loss so far: {best_val_loss:.4f}")
+        # Load the early stopping counter if it exists, otherwise reset.
+        epochs_without_improvement = checkpoint.get('epochs_without_improvement', 0)
+        logging.info(f"Resumed from Epoch {start_epoch}. Best validation loss: {best_val_loss:.4f}. Epochs without improvement: {epochs_without_improvement}")
     else:
         logging.info("Starting a new training session.")
 
@@ -115,41 +119,37 @@ def main():
 
             embeddings = embedding_net(images)
 
-            # --- Online Semi-Hard Negative Mining ---
+            # --- Online "Batch-All" Triplet Mining ---
+            # This strategy considers all valid triplets in the batch and averages the loss,
+            # making it more robust than "semi-hard" mining, which can stop learning if no
+            # semi-hard negatives are found.
+
             # Calculate pairwise distance matrix
             pairwise_dist = torch.cdist(embeddings, embeddings, p=2)
 
-            all_triplets_loss = []
-            # Iterate through each sample in the batch as an anchor
-            for i in range(len(labels)):
-                anchor_label = labels[i]
-                dists = pairwise_dist[i]
+            # Create masks for anchor-positive and anchor-negative pairs
+            adjacency = labels.unsqueeze(1) == labels.unsqueeze(0)
+            identity_mask = torch.eye(labels.size(0), dtype=torch.bool, device=device)
+            pos_mask = adjacency & ~identity_mask
+            neg_mask = ~adjacency
 
-                # Find all positives and negatives for this anchor
-                pos_mask = (labels == anchor_label) & (torch.arange(len(labels)).to(device) != i)
-                neg_mask = labels != anchor_label
+            # Use broadcasting to compute all triplet losses at once
+            dist_ap = pairwise_dist.unsqueeze(2)  # Anchor-Positive distances
+            dist_an = pairwise_dist.unsqueeze(1)  # Anchor-Negative distances
+            triplet_loss = dist_ap - dist_an + TRIPLET_MARGIN
 
-                if not torch.any(pos_mask) or not torch.any(neg_mask):
-                    continue
+            # Mask out invalid triplets and apply ReLU
+            mask = pos_mask.unsqueeze(2) & neg_mask.unsqueeze(1)
+            triplet_loss = F.relu(triplet_loss * mask.float())
 
-                # Select the hardest positive (furthest from anchor)
-                hardest_pos_dist = dists[pos_mask].max()
+            # Calculate the mean loss over the number of positive (non-zero) triplets
+            num_positive_triplets = torch.sum(triplet_loss > 1e-16)
+            loss = torch.sum(triplet_loss) / (num_positive_triplets + 1e-16)
 
-                # Select semi-hard negatives: dist(A,P) < dist(A,N) < dist(A,P) + margin
-                semi_hard_neg_mask = neg_mask & (dists > hardest_pos_dist) & (dists < (hardest_pos_dist + TRIPLET_MARGIN))
-                if torch.any(semi_hard_neg_mask):
-                    # Form triplets with all semi-hard negatives and calculate their loss
-                    loss_for_anchor = F.relu(hardest_pos_dist - dists[semi_hard_neg_mask] + TRIPLET_MARGIN)
-                    all_triplets_loss.append(loss_for_anchor)
-
-            # Only perform backpropagation if valid triplets were found in the batch.
-            if all_triplets_loss:
-                loss = torch.cat(all_triplets_loss).mean()
+            if num_positive_triplets > 0:
                 loss.backward()
                 optimizer.step()
             else:
-                # If no valid triplets are found, the loss is effectively zero for this batch.
-                # We create a tensor for logging purposes but do not backpropagate.
                 loss = torch.tensor(0.0)
 
             train_loss += loss.item()
@@ -211,17 +211,27 @@ def main():
         # Save the model if validation loss has improved
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
+            epochs_without_improvement = 0  # Reset counter
             # Save a checkpoint dictionary for robust resuming.
             torch.save({
                 'epoch': epoch + 1,
                 'model_state_dict': embedding_net.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
                 'best_val_loss': best_val_loss,
+                'epochs_without_improvement': epochs_without_improvement
             }, MODEL_SAVE_PATH)
             logging.info(f"Validation loss improved. Checkpoint saved to {MODEL_SAVE_PATH}")
+        else:
+            epochs_without_improvement += 1
+            logging.info(f"Validation loss did not improve. Count: {epochs_without_improvement}/{EARLY_STOPPING_PATIENCE}")
 
         # Step the scheduler based on the validation loss
         scheduler.step(avg_val_loss)
+
+        # Check for early stopping
+        if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
+            logging.info(f"Stopping early as validation loss has not improved for {EARLY_STOPPING_PATIENCE} epochs.")
+            break
 
     logging.info("Training complete.")
     logging.info(f"Best validation loss: {best_val_loss:.4f}")

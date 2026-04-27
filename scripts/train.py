@@ -19,7 +19,7 @@ MODEL_SAVE_PATH = "trained_models/embedding_net.pth"
 HISTORY_SAVE_PATH = "training_history.csv"
 
 # Hyperparameters
-NUM_EPOCHS = 25
+NUM_EPOCHS = 100
 BATCH_SIZE = 32
 LEARNING_RATE = 0.0001
 CONTRASTIVE_MARGIN = 1.0

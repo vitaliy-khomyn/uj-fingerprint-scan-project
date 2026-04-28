@@ -1,9 +1,9 @@
+import logging
 import os
 import re
-import logging
 from collections import defaultdict
-from sklearn.model_selection import train_test_split
 from dotenv import load_dotenv
+from sklearn.model_selection import train_test_split
 
 load_dotenv()
 
@@ -22,9 +22,15 @@ def parse_filename(filename):
 
     Example: 1__M_Left_index_finger.BMP -> (1, 'M', 'Left_index_finger')
     Example: 100__F_Right_ring_finger_CR.BMP -> (100, 'F', 'Right_ring_finger')
+
+    Args:
+        filename (str): The filename parsed.
+
+    Returns:
+        tuple: Extracted person_id, gender, and finger_name.
     """
-    # This regex is specifically designed to be robust against the SOCOFing naming scheme.
-    # It explicitly matches the known finger names and separates them from alteration suffixes.
+    # regex designed to be robust against socofing naming scheme
+    # explicitly matches known finger names and separates them from alteration suffixes
     finger_pattern = r"((?:Left|Right)_(?:thumb|index|middle|ring|little)(?:_finger)?)"
     match = re.match(rf"(\d+)__(\w)_{finger_pattern}(?:_.*)?\.BMP", filename, re.IGNORECASE)
 
@@ -40,6 +46,14 @@ def _load_fingerprint_map(dataset_path, min_user_id, max_user_id):
     """
     Scans the dataset subdirectories and maps all found fingerprint image paths
     to their corresponding (person_id, finger_name) key.
+
+    Args:
+        dataset_path (str): The dataset directory location.
+        min_user_id (int): The minimum user ID threshold.
+        max_user_id (int): The maximum user ID threshold.
+
+    Returns:
+        defaultdict: A dictionary mapping IDs to image paths.
     """
     fingerprint_map = defaultdict(list)
     logging.info(f"Scanning dataset root path: {dataset_path}")
@@ -95,14 +109,14 @@ def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_sampl
 
     # Split the files for each finger into training and testing sets.
     for (person_id, finger_name), files in fingerprint_map.items():
-        # Ensure there are enough samples for a meaningful split, leaving at least
-        # min_train_samples in the training set to allow for positive pair generation.
+        # ensure enough samples for meaningful split
         if test_samples > 0 and len(files) >= test_samples + min_train_samples:
             train_set, test_set = train_test_split(files, test_size=test_samples, random_state=random_state)
             train_files[(person_id, finger_name)] = train_set
             test_files[(person_id, finger_name)] = test_set
         else:
-            # If not enough samples for a split, allocate all to training.
+            # if not enough samples for a split, allocate all to training.
+            # all allocated to training if not enough samples for split
             train_files[(person_id, finger_name)] = files
 
     logging.info(f"Data split complete. Training samples: {sum(len(v) for v in train_files.values())}, Testing samples: {sum(len(v) for v in test_files.values())}")
@@ -113,6 +127,9 @@ def main():
     """
     Runs a demonstration of the data loading and splitting process.
     This function is executed when the script is run directly.
+
+    Returns:
+        None
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

@@ -12,22 +12,34 @@ class SiameseFingerprintDataset(Dataset):
     A PyTorch Dataset class that generates pairs of fingerprint images on-the-fly
     for training a Siamese network with contrastive loss.
     """
-    def __init__(self, file_data, transform=None, preprocessor=None):
+    def __init__(self, file_data, transform=None, preprocessor=None, use_cache=False):
         """
         Args:
             file_data (dict): A dictionary mapping (person_id, finger_name) to a list of file paths.
             transform (callable, optional): Optional transform to be applied on a sample.
             preprocessor (FingerprintPreprocessor, optional): The preprocessor for image normalization and resizing.
+            use_cache (bool): If True, pre-loads all preprocessed images into RAM.
         """
         self.file_data = file_data
         self.preprocessor = preprocessor if preprocessor is not None else FingerprintPreprocessor(verbose=False)
         self.transform = transform if transform is not None else self.get_default_transform()
+        self.use_cache = use_cache
 
         # Pre-calculate lists for efficient sampling.
         self.finger_ids = list(self.file_data.keys())
         self.all_files = [item for sublist in self.file_data.values() for item in sublist]
         # Identify which fingers are eligible for creating positive pairs.
         self.eligible_positive_fids = [fid for fid in self.finger_ids if len(self.file_data[fid]) >= 2]
+
+        self.cache = {}
+        if self.use_cache:
+            # Cache preprocessed images in memory to eliminate disk I/O bottlenecks during training.
+            # This provides a massive speedup by preventing repetitive hard drive reads.
+            logging.info(f"Caching {len(self.all_files)} images in memory...")
+            for file_path in self.all_files:
+                self.cache[file_path] = self.preprocessor.preprocess(file_path)
+        else:
+            logging.info("In-memory caching is disabled to save RAM. Images will be loaded on-the-fly.")
 
     @staticmethod
     def get_validation_transform():
@@ -80,8 +92,12 @@ class SiameseFingerprintDataset(Dataset):
             img_path1, img_path2, label = self._get_negative_pair()
 
         # The preprocessor returns a numpy array (H, W, C), which ToTensor converts to (C, H, W).
-        img1 = self.preprocessor.preprocess(img_path1)
-        img2 = self.preprocessor.preprocess(img_path2)
+        if self.use_cache:
+            img1 = self.cache[img_path1]
+            img2 = self.cache[img_path2]
+        else:
+            img1 = self.preprocessor.preprocess(img_path1)
+            img2 = self.preprocessor.preprocess(img_path2)
 
         if self.transform:
             img1 = self.transform(img1)

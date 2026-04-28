@@ -64,7 +64,7 @@ def _load_fingerprint_map(dataset_path, min_user_id, max_user_id):
     return fingerprint_map
 
 
-def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_samples=5, random_state=42):
+def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_samples=5, min_train_samples=2, random_state=42):
     """
     Loads fingerprint paths from the SOCOFing dataset and splits them into
     training and testing sets.
@@ -74,6 +74,7 @@ def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_sampl
         max_user_id (int): The maximum user ID to include.
         min_user_id (int): The minimum user ID to include.
         test_samples (int): The number of samples per finger to allocate to the test set.
+        min_train_samples (int): The minimum number of samples per finger to keep for the training set.
         random_state (int): Seed for reproducibility.
 
     Returns:
@@ -94,13 +95,14 @@ def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_sampl
 
     # Split the files for each finger into training and testing sets.
     for (person_id, finger_name), files in fingerprint_map.items():
-        # Ensure there are enough samples for both training and testing.
-        if len(files) > test_samples:
+        # Ensure there are enough samples for a meaningful split, leaving at least
+        # min_train_samples in the training set to allow for positive pair generation.
+        if test_samples > 0 and len(files) >= test_samples + min_train_samples:
             train_set, test_set = train_test_split(files, test_size=test_samples, random_state=random_state)
             train_files[(person_id, finger_name)] = train_set
             test_files[(person_id, finger_name)] = test_set
         else:
-            # If not enough samples, allocate all to training.
+            # If not enough samples for a split, allocate all to training.
             train_files[(person_id, finger_name)] = files
 
     logging.info(f"Data split complete. Training samples: {sum(len(v) for v in train_files.values())}, Testing samples: {sum(len(v) for v in test_files.values())}")

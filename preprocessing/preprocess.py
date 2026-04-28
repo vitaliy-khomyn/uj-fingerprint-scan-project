@@ -52,21 +52,26 @@ class FingerprintPreprocessor:
         Returns:
             numpy.ndarray: The preprocessed fingerprint image ready for the model.
         """
-        if self.verbose: logging.info(f"Processing image: {image_path}")
-        image = cv2.imread(image_path)
-        if image is None:
+        if self.verbose:
+            logging.info(f"Processing image: {image_path}")
+        # Read directly as grayscale! Saves disk bandwidth and skips CPU conversion
+        gray_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        if gray_image is None:
             raise FileNotFoundError(f"Image not found at {image_path}")
 
-        gray_image = self._grayscale_conversion(image)
-        if self.verbose: logging.info("Step 1: Grayscale Conversion - Done.")
+        if self.verbose:
+            logging.info("Step 1: Grayscale Conversion - Done.")
 
         normalized_image = self._normalize_image(gray_image)
-        if self.verbose: logging.info("Step 2: Normalization (CLAHE) - Done.")
+        if self.verbose:
+            logging.info("Step 2: Normalization (CLAHE) - Done.")
 
         final_image = self._resize_image(normalized_image)
-        if self.verbose: logging.info(f"Step 3: Resizing to {self.image_size} - Done.")
+        if self.verbose:
+            logging.info(f"Step 3: Resizing to {self.image_size} - Done.")
 
-        if self.verbose: logging.info("Preprocessing complete.")
+        if self.verbose:
+            logging.info("Preprocessing complete.")
         return final_image
 
 

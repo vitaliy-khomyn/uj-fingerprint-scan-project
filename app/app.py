@@ -70,7 +70,7 @@ def main() -> None:
     uploaded_file = st.file_uploader("Choose a fingerprint image...", type=["bmp", "png", "jpg", "jpeg"])
 
     if uploaded_file is not None:
-        # read the uploaded image read into memory
+        # read uploaded image into memory
         file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
         image = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
 
@@ -92,7 +92,7 @@ def main() -> None:
                     # clean temp file
                     os.remove(temp_path)
 
-                    # search the database searched for closest match
+                    # search database for closest match
                     best_match_id = None
                     best_distance = float('inf')
 

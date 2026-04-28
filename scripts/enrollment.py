@@ -66,7 +66,7 @@ def main() -> None:
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # global environment checked handling exception cases
+    # check global environment handling exception cases
     if not DATASET_PATH:
         raise ValueError("SOCOFING_DATASET_PATH environment variable not set. Please create a .env file.")
 

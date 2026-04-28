@@ -35,7 +35,7 @@ class FingerprintPreprocessor:
         Returns:
             np.ndarray: The resulting grayscale image.
         """
-        # converted to grayscale if channels indicate color image
+        # convert to grayscale if channels indicate color image
         if len(image.shape) == 3:
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return image
@@ -64,7 +64,7 @@ class FingerprintPreprocessor:
         Returns:
             np.ndarray: The resized, 3-channel representation.
         """
-        # extra dimension added and converted to rgb for pre-trained models expecting 3-channel inputs
+        # add extra dimension and convert to rgb for pre-trained models expecting 3-channel inputs
         resized = cv2.resize(image, (self.image_size[1], self.image_size[0]))
         return cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
 
@@ -114,7 +114,7 @@ def _main() -> None:
         None
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    # initiated example with standard cnn input size
+    # initiate example with standard cnn input size
     preprocessor = FingerprintPreprocessor(image_size=(128, 128))
     try:
         dummy_image_path = "fingerprint.png"

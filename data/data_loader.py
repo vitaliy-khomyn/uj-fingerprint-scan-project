@@ -115,8 +115,7 @@ def load_and_split_data(dataset_path, max_user_id=100, min_user_id=1, test_sampl
             train_files[(person_id, finger_name)] = train_set
             test_files[(person_id, finger_name)] = test_set
         else:
-            # if not enough samples for a split, allocate all to training.
-            # all allocated to training if not enough samples for split
+            # allocate all to training if not enough samples for a split
             train_files[(person_id, finger_name)] = files
 
     logging.info(f"Data split complete. Training samples: {sum(len(v) for v in train_files.values())}, Testing samples: {sum(len(v) for v in test_files.values())}")

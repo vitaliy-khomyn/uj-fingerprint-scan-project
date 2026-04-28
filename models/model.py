@@ -32,7 +32,7 @@ class EmbeddingNet(nn.Module):
 
         in_features = self.base_model.classifier[1].in_features
 
-        # original classifier replaced with new linear layer for embedding generation
+        # replace original classifier with new linear layer for embedding generation
         self.base_model.classifier = nn.Linear(in_features, embedding_dim)
 
     def forward(self, x):
@@ -46,7 +46,7 @@ class EmbeddingNet(nn.Module):
             torch.Tensor: The normalized embedding vector.
         """
         embedding = self.base_model(x)
-        # output embedding vector l2-normalized for consistent distance metrics
+        # l2-normalize output embedding vector for consistent distance metrics
         normalized_embedding = F.normalize(embedding, p=2, dim=1)
         return normalized_embedding
 
@@ -179,7 +179,7 @@ def verify_contrastive_loss(device):
     loss_neg_close = loss_fn(emb1_neg_close, emb2_neg_close, labels_neg_close)
     logging.info(f"Loss for negative pair inside margin (should be > 0): {loss_neg_close.item():.4f}")
 
-    # Test with a negative pair outside the margin (far apart)
+    # test with a negative pair outside the margin (far apart)
     emb1_neg_far = F.normalize(torch.randn(4, 128)).to(device)
     emb2_neg_far = F.normalize(emb1_neg_far + torch.randn_like(emb1_neg_far) * 2.0) # Distance > margin
     labels_neg_far = torch.zeros(4, 1).to(device)

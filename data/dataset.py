@@ -30,7 +30,7 @@ class SiameseFingerprintDataset(Dataset):
         self.transform = transform if transform is not None else self.get_default_transform()
         self.use_cache = use_cache
 
-        # list pre-calculated for efficient sampling
+        # pre-calculate list for efficient sampling
         self.finger_ids = list(self.file_data.keys())
         self.all_files = [item for sublist in self.file_data.values() for item in sublist]
         # identify which fingers are eligible for creating positive pairs.

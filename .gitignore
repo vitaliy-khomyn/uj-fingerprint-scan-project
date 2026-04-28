@@ -56,4 +56,5 @@ Thumbs.db
 trained_models/*
 plots/*
 results/*
+!results/final
 .fails/*

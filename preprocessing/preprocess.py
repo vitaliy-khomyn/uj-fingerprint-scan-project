@@ -1,87 +1,122 @@
 import cv2
-import numpy as np
 import logging
+import numpy as np
+from typing import Tuple
 
 
 class FingerprintPreprocessor:
     """
-    A class to encapsulate fingerprint image preprocessing steps for a CNN-based model.
+    Encapsulates fingerprint image preprocessing steps for a CNN-based model.
     """
 
-    def __init__(self, image_size=(128, 128), clahe_clip_limit=2.0, clahe_grid_size=(8, 8), verbose=True):
+    def __init__(self, image_size: Tuple[int, int] = (128, 128), clahe_clip_limit: float = 2.0, clahe_grid_size: Tuple[int, int] = (8, 8)) -> None:
         """
         Initializes the preprocessor with parameters for various steps.
 
         Args:
-            image_size (tuple): The target size (height, width) for the network input.
+            image_size (Tuple[int, int]): Target size for network input.
             clahe_clip_limit (float): Clip limit for CLAHE algorithm.
-            clahe_grid_size (tuple): Grid size for CLAHE algorithm.
-            verbose (bool): If True, prints processing steps.
+            clahe_grid_size (Tuple[int, int]): Grid size for CLAHE algorithm.
+
+        Returns:
+            None
         """
         self.image_size = image_size
         self.clahe_clip_limit = clahe_clip_limit
         self.clahe_grid_size = clahe_grid_size
-        self.verbose = verbose
 
-    def _grayscale_conversion(self, image):
-        """Converts an image to grayscale if it's not already."""
+    def _grayscale_conversion(self, image: np.ndarray) -> np.ndarray:
+        """
+        Converts an image to grayscale if needed.
+
+        Args:
+            image (np.ndarray): The target image to inspect and convert.
+
+        Returns:
+            np.ndarray: The resulting grayscale image.
+        """
+        # converted to grayscale if channels indicate color image
         if len(image.shape) == 3:
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return image
 
-    def _normalize_image(self, gray_image):
-        """Applies Contrast Limited Adaptive Histogram Equalization (CLAHE)."""
+    def _normalize_image(self, gray_image: np.ndarray) -> np.ndarray:
+        """
+        Applies contrast limited adaptive histogram equalization.
+
+        Args:
+            gray_image (np.ndarray): A single-channel grayscale image array.
+
+        Returns:
+            np.ndarray: The normalized contrast image.
+        """
         clahe = cv2.createCLAHE(clipLimit=self.clahe_clip_limit, tileGridSize=self.clahe_grid_size)
         normalized_image = clahe.apply(gray_image)
         return normalized_image
 
-    def _resize_image(self, image):
-        """Resizes the image to the target size for the CNN."""
-        # We add an extra dimension and then convert to RGB for pre-trained models
-        # that expect 3-channel inputs.
+    def _resize_image(self, image: np.ndarray) -> np.ndarray:
+        """
+        Resizes an image to the target size required for the CNN.
+
+        Args:
+            image (np.ndarray): The preprocessed 2D array representation.
+
+        Returns:
+            np.ndarray: The resized, 3-channel representation.
+        """
+        # extra dimension added and converted to rgb for pre-trained models expecting 3-channel inputs
         resized = cv2.resize(image, (self.image_size[1], self.image_size[0]))
         return cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
 
-    def preprocess(self, image_path):
+    def preprocess(self, image_path: str) -> np.ndarray:
         """
         Performs the complete preprocessing pipeline on a fingerprint image.
 
         Args:
-            image_path (str): Path to the input fingerprint image.
+            image_path (str): The path to the input fingerprint image.
 
         Returns:
-            numpy.ndarray: The preprocessed fingerprint image ready for the model.
+            np.ndarray: The preprocessed fingerprint image ready for the model.
         """
-        if self.verbose:
-            logging.info(f"Processing image: {image_path}")
-        # Read directly as grayscale! Saves disk bandwidth and skips CPU conversion
+        # read directly as grayscale to save disk bandwidth and skip conversion compute
         gray_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
         if gray_image is None:
             raise FileNotFoundError(f"Image not found at {image_path}")
 
-        if self.verbose:
-            logging.info("Step 1: Grayscale Conversion - Done.")
-
         normalized_image = self._normalize_image(gray_image)
-        if self.verbose:
-            logging.info("Step 2: Normalization (CLAHE) - Done.")
 
         final_image = self._resize_image(normalized_image)
-        if self.verbose:
-            logging.info(f"Step 3: Resizing to {self.image_size} - Done.")
-
-        if self.verbose:
-            logging.info("Preprocessing complete.")
         return final_image
 
 
-# Example Usage (assuming you have a fingerprint image named 'fingerprint.png')
-if __name__ == "__main__":
+def _create_dummy_image(image_path: str) -> None:
+    """
+    Creates a dummy fingerprint image to fulfill testing requirements.
+
+    Args:
+        image_path (str): The target file destination output.
+
+    Returns:
+        None
+    """
+    dummy_img = np.full((200, 200), 128, dtype=np.uint8)
+    # draw lines to simulate ridges
+    for i in range(10, 190, 20):
+        cv2.line(dummy_img, (10, i), (190, i), 255, 3)
+    cv2.imwrite(image_path, dummy_img)
+
+
+def _main() -> None:
+    """
+    Demonstrates module functionality independently.
+
+    Returns:
+        None
+    """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-    # Example with a standard CNN input size
-    preprocessor = FingerprintPreprocessor(image_size=(128, 128), verbose=True)
+    # initiated example with standard cnn input size
+    preprocessor = FingerprintPreprocessor(image_size=(128, 128))
     try:
-        # Create a dummy image for demonstration if 'fingerprint.png' doesn't exist
         dummy_image_path = "fingerprint.png"
         try:
             test_image = cv2.imread(dummy_image_path)
@@ -89,18 +124,14 @@ if __name__ == "__main__":
                 raise FileNotFoundError
         except FileNotFoundError:
             logging.info(f"'{dummy_image_path}' not found. Creating a dummy image for demonstration.")
-            dummy_img = np.full((200, 200), 128, dtype=np.uint8)
-            # Draw some lines to simulate ridges
-            for i in range(10, 190, 20):
-                cv2.line(dummy_img, (10, i), (190, i), 255, 3)
-            cv2.imwrite(dummy_image_path, dummy_img)
+            _create_dummy_image(dummy_image_path)
             logging.info(f"Dummy image saved as '{dummy_image_path}'.")
 
         processed_fingerprint = preprocessor.preprocess(dummy_image_path)
         cv2.imwrite("processed_fingerprint.png", processed_fingerprint)
         logging.info("Processed image saved as 'processed_fingerprint.png'")
 
-        # Display results (optional, requires matplotlib or direct imshow)
+        # output results to ui
         import matplotlib.pyplot as plt
         plt.figure(figsize=(10, 5))
         plt.subplot(1, 2, 1)
@@ -115,3 +146,7 @@ if __name__ == "__main__":
         logging.error(e)
     except Exception as e:
         logging.error(f"An error occurred: {e}")
+
+
+if __name__ == "__main__":
+    _main()

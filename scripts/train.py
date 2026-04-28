@@ -9,7 +9,7 @@ import cv2
 import torch.nn.functional as F
 
 from data.data_loader import load_and_split_data
-from data.dataset import SiameseFingerprintDataset, FingerprintImageDataset, BalancedBatchSampler
+from data.dataset import SiameseFingerprintDataset
 from models.model import EmbeddingNet, ContrastiveLoss
 from preprocessing.preprocess import FingerprintPreprocessor
 
@@ -21,8 +21,8 @@ HISTORY_SAVE_PATH = "training_history.csv"
 # Hyperparameters
 NUM_EPOCHS = 40  # A reasonable upper limit; Early Stopping will likely finish sooner.
 BATCH_SIZE = 32
-LEARNING_RATE = 0.0001  # A more robust loss signal can handle a slightly larger LR
-TRIPLET_MARGIN = 0.4
+LEARNING_RATE = 0.0001
+CONTRASTIVE_MARGIN = 1.0
 VALIDATION_THRESHOLD = 0.5  # Distance threshold for accuracy calculation.
 EARLY_STOPPING_PATIENCE = 10  # Stop if val_loss doesn't improve for 10 epochs.
 NUM_TRAINING_USERS = 400  # The number of users to include for training and validation.
@@ -59,17 +59,11 @@ def main():
     train_transform = SiameseFingerprintDataset.get_training_transform()
     val_transform = SiameseFingerprintDataset.get_validation_transform()
 
-    # For online hard mining, we need a dataset that returns individual images and labels,
-    # and a special sampler to create batches with multiple instances of the same class.
-    train_dataset = FingerprintImageDataset(train_files, transform=train_transform, preprocessor=quiet_preprocessor)
-    # Each batch will contain P fingers, with K images from each finger.
-    # By prioritizing more samples per class (K) over more classes (P), we increase the
-    # likelihood of finding meaningful hard triplets within each batch.
-    # P=4, K=8 is a stronger configuration than P=8, K=4 for the same batch size.
-    train_batch_sampler = BalancedBatchSampler(train_dataset, n_classes=4, n_samples=8)  # Batch size = 4 * 8 = 32
-    train_loader = DataLoader(train_dataset, batch_sampler=train_batch_sampler, num_workers=4, pin_memory=True)
+    # Use the Siamese dataset for training, which generates positive/negative pairs.
+    train_dataset = SiameseFingerprintDataset(train_files, transform=train_transform, preprocessor=quiet_preprocessor)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
 
-    # The validation dataset remains pair-based for consistent metric calculation.
+    # The validation dataset also uses the Siamese pair-based structure.
     val_dataset = SiameseFingerprintDataset(val_files, transform=val_transform, preprocessor=quiet_preprocessor)
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
 
@@ -79,9 +73,8 @@ def main():
     # 3. Model, Optimizer, and Checkpoint Loading
     logging.info("Initializing model...")
     embedding_net = EmbeddingNet(embedding_dim=128).to(device)
-    # Use TripletLoss for training and ContrastiveLoss for validation metrics
-    # The TripletLoss is calculated manually in the training loop for "batch-all" mining.
-    val_criterion = ContrastiveLoss(margin=1.0)  # ContrastiveLoss is used for validation metrics.
+    # Use ContrastiveLoss for both training and validation.
+    criterion = ContrastiveLoss(margin=CONTRASTIVE_MARGIN)
     optimizer = AdamW(embedding_net.parameters(), lr=LEARNING_RATE)
     scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=3, verbose=True)
 
@@ -115,45 +108,17 @@ def main():
         embedding_net.train()
         train_loss = 0.0
         progress_bar = tqdm(train_loader, desc="Training")
-        for i, (images, labels) in enumerate(progress_bar):
-            images, labels = images.to(device), labels.to(device)
+        for i, (img1, img2, label) in enumerate(progress_bar):
+            img1, img2, label = img1.to(device), img2.to(device), label.to(device)
 
             optimizer.zero_grad()
 
-            embeddings = embedding_net(images)
+            output1 = embedding_net(img1)
+            output2 = embedding_net(img2)
 
-            # --- Online "Batch-All" Triplet Mining ---
-            # This strategy considers all valid triplets in the batch and averages the loss,
-            # making it more robust than "semi-hard" mining, which can stop learning if no
-            # semi-hard negatives are found.
-
-            # Calculate pairwise distance matrix
-            pairwise_dist = torch.cdist(embeddings, embeddings, p=2)
-
-            # Create masks for anchor-positive and anchor-negative pairs
-            adjacency = labels.unsqueeze(1) == labels.unsqueeze(0)
-            identity_mask = torch.eye(labels.size(0), dtype=torch.bool, device=device)
-            pos_mask = adjacency & ~identity_mask
-            neg_mask = ~adjacency
-
-            # Use broadcasting to compute all triplet losses at once
-            dist_ap = pairwise_dist.unsqueeze(2)  # Anchor-Positive distances
-            dist_an = pairwise_dist.unsqueeze(1)  # Anchor-Negative distances
-            triplet_loss = dist_ap - dist_an + TRIPLET_MARGIN
-
-            # Mask out invalid triplets and apply ReLU
-            mask = pos_mask.unsqueeze(2) & neg_mask.unsqueeze(1)
-            triplet_loss = F.relu(triplet_loss * mask.float())
-
-            # Calculate the mean loss over the number of positive (non-zero) triplets
-            num_positive_triplets = torch.sum(triplet_loss > 1e-16)
-            loss = torch.sum(triplet_loss) / (num_positive_triplets + 1e-16)
-
-            if num_positive_triplets > 0:
-                loss.backward()
-                optimizer.step()
-            else:
-                loss = torch.tensor(0.0)
+            loss = criterion(output1, output2, label.unsqueeze(1))
+            loss.backward()
+            optimizer.step()
 
             train_loss += loss.item()
             progress_bar.set_postfix({'loss': f'{loss.item():.4f}'})
@@ -178,7 +143,7 @@ def main():
                 output1 = embedding_net(img1)
                 output2 = embedding_net(img2)
 
-                loss = val_criterion(output1, output2, label_squeezed)
+                loss = criterion(output1, output2, label_squeezed)
                 val_loss += loss.item()
 
                 # Calculate distances for metric tracking
